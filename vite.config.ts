@@ -65,16 +65,17 @@ Regras Cruciais:
 - É PROIBIDO omitir qualquer uma dessas 5 refeições em qualquer dia.
 - Cada refeição DEVE conter 5 OPÇÕES diferentes e completas (totalizando 5 strings no array).
 - Proibido deixar campos vazios. Preencha tudo com alimentos variados.
-\`;
+`;
                 
                 const result = await model.generateContent(prompt);
-                let text = result.response.text();
+                const response = await result.response;
+                let text = response.text();
                 text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
                 console.log('IA respondeu com sucesso!');
                 res.setHeader('Content-Type', 'application/json');
                 res.end(text);
-              } catch (err) {
+              } catch (err: any) {
                 console.error('ERRO NA API LOCAL:', err.message);
                 res.statusCode = 500;
                 res.end(JSON.stringify({ error: err.message }));

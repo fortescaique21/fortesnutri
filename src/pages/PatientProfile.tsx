@@ -27,7 +27,6 @@ export default function PatientProfile() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedPlan, setGeneratedPlan] = useState<any>(null);
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
-  const [selectedPlanView, setSelectedPlanView] = useState<any>(null);
 
   // New Consultation Form State
   const [newConsultation, setNewConsultation] = useState({
@@ -761,7 +760,6 @@ export default function PatientProfile() {
                 key={plan.id} 
                 className="history-item cursor-pointer"
                 onClick={() => {
-                  setSelectedPlanView(plan.conteudo);
                   setActiveTab('plano_ia');
                   setGeneratedPlan(plan.conteudo);
                   setEditingPlanId(plan.id);
