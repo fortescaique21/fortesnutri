@@ -19,9 +19,15 @@ export default function PatientProfile() {
   const [consultations, setConsultations] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'pessoal' | 'clinico' | 'habitos'>('pessoal');
+  const [activeTab, setActiveTab] = useState<'pessoal' | 'clinico' | 'habitos' | 'plano_ia'>('pessoal');
   const [showModal, setShowModal] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  
+  // IA Meal Plan State
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedPlan, setGeneratedPlan] = useState<any>(null);
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
+  const [selectedPlanView, setSelectedPlanView] = useState<any>(null);
 
   // New Consultation Form State
   const [newConsultation, setNewConsultation] = useState({
@@ -67,6 +73,12 @@ export default function PatientProfile() {
         .order('created_at', { ascending: false });
       if (plError) throw plError;
       setPlans(plData || []);
+      
+      // Auto-load latest plan into editor if available
+      if (plData && plData.length > 0 && !generatedPlan) {
+        setGeneratedPlan(plData[0].conteudo);
+        setEditingPlanId(plData[0].id);
+      }
 
     } catch (error: any) {
       console.error('Erro ao carregar dados:', error);
@@ -143,6 +155,72 @@ export default function PatientProfile() {
     } catch (error) {
       showNotify('error', 'Erro ao salvar consulta.');
     }
+  };
+
+  const handleGeneratePlan = async () => {
+    setIsGenerating(true);
+    setEditingPlanId(null); // Reset ID to create a new one upon saving
+    try {
+      const response = await fetch('/api/gerar-plano', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dados_do_paciente: patient })
+      });
+
+      if (!response.ok) throw new Error('Erro na geração do plano');
+
+      const data = await response.json();
+      setGeneratedPlan(data);
+      setActiveTab('plano_ia');
+      showNotify('success', 'Plano alimentar gerado com sucesso!');
+    } catch (error) {
+      console.error(error);
+      showNotify('error', 'Falha ao gerar plano com IA.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleSaveGeneratedPlan = async () => {
+    try {
+      if (editingPlanId) {
+        // Update existing plan
+        const { error } = await supabase
+          .from('planos_alimentares')
+          .update({ conteudo: generatedPlan })
+          .eq('id', editingPlanId);
+        if (error) throw error;
+        showNotify('success', 'Plano alimentar atualizado com sucesso!');
+      } else {
+        // Insert new plan
+        const { error } = await supabase
+          .from('planos_alimentares')
+          .insert([{
+            paciente_id: id,
+            conteudo: generatedPlan
+          }]);
+        if (error) throw error;
+        showNotify('success', 'Plano alimentar salvo com sucesso!');
+      }
+
+      fetchData(); // Refresh history
+    } catch (error) {
+      console.error(error);
+      showNotify('error', 'Erro ao salvar plano alimentar.');
+    }
+  };
+
+  const handleEditPlanValue = (dayIndex: number, mealType: string, optionIndex: number, newValue: string) => {
+    const updatedPlan = { ...generatedPlan };
+    const meal = updatedPlan.plano_semanal[dayIndex].refeicoes[mealType];
+    
+    if (Array.isArray(meal)) {
+      updatedPlan.plano_semanal[dayIndex].refeicoes[mealType][optionIndex] = newValue;
+    } else {
+      updatedPlan.plano_semanal[dayIndex].refeicoes[mealType].opcoes[optionIndex] = newValue;
+    }
+    
+    setGeneratedPlan(updatedPlan);
   };
 
   // Chart Data (sorted ascending for the chart)
@@ -227,6 +305,12 @@ export default function PatientProfile() {
               onClick={() => setActiveTab('habitos')}
             >
               Hábitos
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'plano_ia' ? 'active' : ''}`}
+              onClick={() => setActiveTab('plano_ia')}
+            >
+              Plano IA {generatedPlan && <span className="badge-new">Novo</span>}
             </button>
           </div>
 
@@ -383,6 +467,130 @@ export default function PatientProfile() {
                 </div>
               </div>
             )}
+
+            {activeTab === 'plano_ia' && (
+              <div className="plano-ia-container">
+                {!generatedPlan && !isGenerating && (
+                  <div className="empty-state py-8">
+                    <Utensils size={48} className="mb-4 opacity-20" />
+                    <p>Gere um plano alimentar personalizado usando Inteligência Artificial.</p>
+                    <button className="btn mt-4" onClick={handleGeneratePlan} style={{ width: 'auto' }}>
+                      Gerar Agora
+                    </button>
+                  </div>
+                )}
+
+                {isGenerating && (
+                  <div className="empty-state py-8">
+                    <div className="loader mb-4"></div>
+                    <p>O Gemini está criando um plano personalizado...</p>
+                    <span className="text-muted text-sm">Isso pode levar alguns segundos.</span>
+                  </div>
+                )}
+
+                {generatedPlan && (
+                  <div className="plan-editor-container" style={{ animation: 'slideUp 0.5s ease-out' }}>
+                    <div className="section-header mb-6">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ background: 'rgba(16, 185, 129, 0.1)', padding: '10px', borderRadius: '12px' }}>
+                          <Utensils size={24} color="var(--primary)" />
+                        </div>
+                        <h4 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>Editor de Plano Alimentar</h4>
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        <button className="btn btn-outline" onClick={() => { setGeneratedPlan(null); setEditingPlanId(null); }} style={{ width: 'auto', padding: '10px 20px' }}>
+                          Descartar
+                        </button>
+                        <button className="btn" onClick={handleSaveGeneratedPlan} style={{ width: 'auto', padding: '10px 24px' }}>
+                          <Save size={20} /> {editingPlanId ? 'Atualizar Plano' : 'Salvar Novo Plano'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="days-scroll" style={{ display: 'flex', gap: '24px', overflowX: 'auto', padding: '10px 10px 40px', scrollSnapType: 'x proximity' }}>
+                      {generatedPlan.plano_semanal.map((dia: any, dIdx: number) => (
+                        <div key={dIdx} className="day-card-ia" style={{ scrollSnapAlign: 'start' }}>
+                          <h5 style={{ fontSize: '1.3rem', marginBottom: '24px', color: 'var(--primary)', fontWeight: 800, borderBottom: '2px solid rgba(16, 185, 129, 0.1)', paddingBottom: '12px' }}>
+                            {dia.dia}
+                          </h5>
+                          
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+                            {Object.entries(dia.refeicoes).map(([mealKey, data]: [string, any]) => {
+                              const options = Array.isArray(data) ? data : (data.opcoes || []);
+                              
+                              const getMealPhoto = (key: string) => {
+                                const k = key.toLowerCase();
+                                let photoId = 'photo-1490818387583-1baba5e638af';
+                                if (k.includes('cafe')) photoId = 'photo-1493770348161-369560ae357d';
+                                if (k.includes('lanche_manha')) photoId = 'photo-1455243627921-9fce66b3981a';
+                                if (k.includes('lanche_tarde')) photoId = 'photo-1540189549336-e6e99c3679fe';
+                                if (k.includes('lanche') && !photoId) photoId = 'photo-1455243627921-9fce66b3981a';
+                                if (k.includes('almoco')) photoId = 'photo-1546069901-ba9599a7e63c';
+                                if (k.includes('jantar')) photoId = 'photo-1512621776951-a57141f2eefd';
+                                return `https://images.unsplash.com/${photoId}?w=150&h=150&fit=crop&q=80`;
+                              };
+
+                              const imageUrl = getMealPhoto(mealKey);
+
+                              return (
+                                <div key={mealKey} className="meal-group-ia">
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px' }}>
+                                    <div className="floating-image" style={{ 
+                                      width: '64px', 
+                                      height: '64px', 
+                                      borderRadius: '16px',
+                                      overflow: 'hidden',
+                                      flexShrink: 0,
+                                      boxShadow: '0 8px 16px rgba(0,0,0,0.15)',
+                                      border: '3px solid white',
+                                      background: '#f1f5f9'
+                                    }}>
+                                      <img 
+                                        src={imageUrl} 
+                                        alt={mealKey} 
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        loading="lazy"
+                                        onError={(e: any) => {
+                                          e.target.style.display = 'none';
+                                          e.target.parentElement.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px">🥗</div>';
+                                        }}
+                                      />
+                                    </div>
+                                    <label style={{ 
+                                      display: 'block', 
+                                      fontSize: '1.1rem', 
+                                      fontWeight: 800, 
+                                      textTransform: 'capitalize', 
+                                      color: 'var(--text-main)', 
+                                      margin: 0,
+                                      fontFamily: 'var(--font-heading)'
+                                    }}>
+                                      {mealKey.replace(/_/g, ' ')}
+                                    </label>
+                                  </div>
+                                  
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    {options.map((opt: string, oIdx: number) => (
+                                      <input 
+                                        key={oIdx}
+                                        className="plan-meal-input"
+                                        value={opt}
+                                        onChange={(e) => handleEditPlanValue(dIdx, mealKey, oIdx, e.target.value)}
+                                        placeholder="Digite uma opção de alimento..."
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
 
@@ -537,14 +745,28 @@ export default function PatientProfile() {
         <section className="list-card">
           <div className="section-header">
             <h3><Utensils size={20} /> Planos Alimentares</h3>
-            <button className="btn" style={{ width: 'auto' }} disabled>
-              Gerar Plano Alimentar
+            <button 
+              className="btn" 
+              style={{ width: 'auto' }} 
+              onClick={handleGeneratePlan}
+              disabled={isGenerating}
+            >
+              {isGenerating ? 'Gerando...' : 'Gerar Plano Alimentar'}
             </button>
           </div>
 
           <div className="history-list">
             {plans.map((plan) => (
-              <div key={plan.id} className="history-item">
+              <div 
+                key={plan.id} 
+                className="history-item cursor-pointer"
+                onClick={() => {
+                  setSelectedPlanView(plan.conteudo);
+                  setActiveTab('plano_ia');
+                  setGeneratedPlan(plan.conteudo);
+                  setEditingPlanId(plan.id);
+                }}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <Calendar size={18} className="text-muted" />
                   <div>
